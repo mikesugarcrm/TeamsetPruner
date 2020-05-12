@@ -14,10 +14,12 @@ It will create back up tables automatically in case you need to revert your chan
 
 ## INSTALLING
 **tar/zip**
+
 You can tar/zip up the contents of the custom/ directory and untar/unzip them in your instance.
 You will need to run QRR for the changes to take effect.
 
 **Module Loadable Package**
+
 With the provided manifest file, you can create a module loadable package with this zip command run from this repo's base directory:
 ```zip -r TeamSetPrunerLoadablePackage.zip manifest.php custom/*```
 Then install the package as you would with any other package.
