@@ -1,4 +1,4 @@
-#The Team Set Pruner
+# The Team Set Pruner
 
 ###A sugar command line tool for safely removing unused team sets from the team sets tables in your sugar instance.
 
@@ -7,12 +7,12 @@ It will create back up tables automatically in case you need to revert your chan
 
 **NOTE: It's very important that you only use this tool during a planned outage. DO NOT USE this tool while users are active on the system.**
 
-##REQUIREMENTS
+## REQUIREMENTS
 - SUGAR 7.9 or later
 - Your instance has enabled team set denormalization
 
 
-##INSTALLING
+## INSTALLING
 **tar/zip**
 You can tar/zip up the contents of the custom/ directory and untar/unzip them in your instance.
 You will need to run QRR for the changes to take effect.
@@ -23,7 +23,7 @@ With the provided manifest file, you can create a module loadable package with t
 Then install the package as you would with any other package.
 
 
-##RUNNING
+## RUNNING
 After you have installed the Team Set Pruner, SSH into your server and navigate to your sugar root. From there, you can run any of the following commands:
 
 To scan the team sets records for unused team sets, and generate a log file:
