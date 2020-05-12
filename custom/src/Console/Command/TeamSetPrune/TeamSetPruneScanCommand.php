@@ -10,7 +10,7 @@ use Symfony\Component\Console\Input\InputOption;
 use Sugarcrm\Sugarcrm\Denormalization\TeamSecurity\State;
 use Sugarcrm\Sugarcrm\DependencyInjection\Container;
 
-require_once('custom/src/TeamSecurity/TeamsetPruner.php');
+require_once('custom/src/Denormalization/TeamSecurity/TeamsetPruner.php');
 
 
 class TeamSetPruneScanCommand extends TeamSetPruneCommand implements InstanceModeInterface

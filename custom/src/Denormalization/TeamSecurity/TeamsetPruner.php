@@ -7,8 +7,8 @@ use BeanFactory as BeanFactory;
  * Class TeamsetPruner
  * @package Sugarcrm\Sugarcrm\custom\Denormalization\TeamSecurity
  *
- * Sugar creates a lot of team sets. Often, these team sets will be "abandoned", meaning there
- * are no records that refer to that team set. Over time, these abandoned team sets accumulate
+ * Sugar creates a lot of team sets. Often, these team sets will be "unused", meaning there
+ * are no records that refer to that team set. Over time, these unused team sets accumulate
  * in the denorm table, and the team_sets and team_sets_teams tables, which causes performance
  * problems generally in sugar.
  *
@@ -35,13 +35,6 @@ class TeamsetPruner
     /* @var array - list of tables that have been backed up, with the original table name as the key and the backed up table name as the value. */
     public $backedUpTables = array();
 
-    /* @var bool - run verify before running prune, and bail if verify fails */
-    public $verifyBeforePrune = false;
-
-    /* @var bool - run confirm after prune */
-    public $confirmAfterPrune = false;
-
-
     public function __construct()
     {
         $this->db = $GLOBALS['db'];
@@ -65,14 +58,8 @@ class TeamsetPruner
             case 'scan':
                 $this->scan();
                 break;
-            case 'verify':
-                $this->verifyTeamsetsToPrune();
-                break;
             case 'prune':
                 $this->prune();
-                break;
-            case 'confirm':
-                $this->confirmPrune();
                 break;
             case 'backup':
                 $this->backupTables();
@@ -89,46 +76,27 @@ class TeamsetPruner
 
 
     /**
-     * Remove unused (abandoned) team sets.
+     * Remove unused team sets. A team set is unused if no bean refers to it.
      *
      * It will backup each table in $this->tablesToPrune. @see TeamsetPruner::backupTable() for details.
      * Then it will truncate each table in $this->tablesToPrune.
-     * Then it will copy only the active (not abandoned) teamsets from each backup table into the the original table.
+     * Then it will copy only the active (in use) team sets from each backup table into the the original table.
      *
      * This process seems counter-intuitive, but truncating and inserting are generally faster than deleting, especially
      * if you're deleting most of the contents of a 100 million row denorm table.
      *
-     * Optionally, it will verify we're not deleting anything we're actually using (team sets that are assigned to a bean
-     * and in the denorm table, but are NOT in the team_sets table). If it does find that we'd be deleting team sets
-     * that are actually in use, it will bail.
-     *
-     * Optionally, it will confirm that we aren't missing any active team sets from the denorm table after pruning. This
-     * can happen if someone has been manually updating the team_set_ids for beans with id's that don't exist in the
-     * team_sets, team_sets_teams table or the denorm table.
      */
     public function prune()
     {
         $this->stdOut("Starting prune");
         $this->scan();
 
-        if ($this->verifyBeforePrune) {
-            $verified = $this->verifyTeamsetsToPrune();
-        } else {
-            $verified = true;
+        // backup the denorm table first - restoring from backup will depend on it.
+        $this->backupTable($this->denormTableName);
+        foreach ($this->tablesToPrune as $tableName => $idColumnName) {
+            $this->pruneTable($tableName);
         }
-
-        if ($verified) {
-            // backup the denorm table first - restoring from backup will depend on it.
-            $this->backupTable($this->denormTableName);
-            foreach ($this->tablesToPrune as $tableName => $idColumnName) {
-                $this->pruneTable($tableName);
-            }
-            $this->saveBackupTableMappings();
-        }
-
-        if ($this->confirmAfterPrune) {
-            $this->confirmPrune();
-        }
+        $this->saveBackupTableMappings();
 
         $this->stdOut("Finished prune");
     }
@@ -157,80 +125,77 @@ class TeamsetPruner
     {
         $this->stdOut("Starting Scan");
         // query the db.
-        $abandonedTeamSets = $this->searchForAbandonedTeamsets();
+        $unusedTeamSets = $this->searchForUnusedTeamsets();
 
         // compute total count of team sets and denorm entries.
-        $count = count(array_keys($abandonedTeamSets));
+        $count = count(array_keys($unusedTeamSets));
         $sum = 0;
-        foreach ($abandonedTeamSets as $teamSetID => $denormTableCount) {
+        foreach ($unusedTeamSets as $teamSetID => $denormTableCount) {
             $sum+=$denormTableCount;
         }
 
         // log those values.
-        $this->stdOut("TeamsetPruner::scan() found $count abandoned team sets, which represent $sum entries in {$this->denormTableName}");
+        $this->stdOut("TeamsetPruner::scan() found $count unused team sets, which represent $sum entries in {$this->denormTableName}");
 
         // write a complete dump to a separate file.
         $dateStamp = date("Y_m_d_H_i_s");
-        $filePath = "TeamsetPruner/scan/abandoned_teamsets_{$dateStamp}";
+        $filePath = "TeamsetPruner/scan/unused_teamsets_{$dateStamp}";
         $this->stdOut("Details have been written to $filePath. This will be an array with each team set id as its key and how many users are in that team set as the value.");
-        $dataAsString = print_r($abandonedTeamSets, true);
+        $dataAsString = print_r($unusedTeamSets, true);
         $this->writeFile($filePath, $dataAsString);
         $this->stdOut("Finished Scan");
     }
 
 
     /**
-     * Return the sql for the abandoned team sets query.
+     * Return the sql for the unused team sets query.
      */
     public function getSQL()
     {
-        $this->stdOut($this->buildAbandonedTeamsetsQuery(true));
+        $this->stdOut($this->buildUnusedTeamsetsQuery(true));
     }
 
 
     /**
-     * Runs the query to find abandoned team sets and returns the results as an array of
+     * Runs the query to find unused team sets and returns the results as an array of
      * team_set_id => number of entries for that team set id in the denorm table.
      *
      * @return array
      */
-    public function searchForAbandonedTeamsets()
+    public function searchForUnusedTeamsets()
     {
         $count = 0;
-        $abandonedTeamsetsData = array();
-        $sql = $this->buildAbandonedTeamsetsQuery(true);
+        $unusedTeamsetsData = array();
+        $sql = $this->buildUnusedTeamsetsQuery(true);
         $results = $this->db->query($sql);
         while ($row = $this->db->fetchByAssoc($results)) {
             $count++;
-            $abandonedTeamsetsData[$row['team_set_id']] = $row['denorm_count'];
+            $unusedTeamsetsData[$row['team_set_id']] = $row['denorm_count'];
         }
-        return $abandonedTeamsetsData;
+        return $unusedTeamsetsData;
     }
 
 
     /**
-     * Builds the sql query for abandoned team sets.
+     * Builds the sql query for unused team sets.
      *
      * This query needs to be built with several variations, which are addressed by the arguments passed into this
      * method.
      *
      * To get a count how many entries a team set accounts for in the denorm table, $includeCount = true.
      *
-     * To search for abandoned (unused) team sets, $abadoned = true. But to search for team sets that are in use,
-     * $abandoned = false.
+     * To search for unused team sets, $unused = true. But to search for team sets that are in use,
+     * $unused = false.
      *
      * idemitsu
      *
      * @param bool $includeCount
-     * @param bool $abandoned
+     * @param bool $unused
      * @param string $teamSetsTableName
      * @param array $userIDs
      * @return string
      */
-    public function buildAbandonedTeamsetsQuery(
-        $includeCount = true,
-        $abandoned = true,
-        $teamSetsTableName = 'team_sets')
+    public function buildUnusedTeamsetsQuery($includeCount = true, $unused = true, $teamSetsTableName = 'team_sets')
     {
         $tables = $this->getTablesWithTeams();
         $unions = $this->buildUnionStatements($tables, $teamSetsTableName);
@@ -239,7 +204,7 @@ class TeamsetPruner
             if (isset($this->backedUpTables[$this->denormTableName])) {
                 $denormTableName = $this->backedUpTables[$this->denormTableName];
             } else {
-                $this->stdOut("{$this->denormTableName} has not been backed up, so we can't use the backup in our queries for buildAbandonedTeamsetsQuery(). Resorting to using original table {$this->denormTableName}");
+                $this->stdOut("{$this->denormTableName} has not been backed up, so we can't use the backup in our queries for buildUnusedTeamsetsQuery(). Resorting to using original table {$this->denormTableName}");
                 $denormTableName = $this->denormTableName;
             }
         } else {
@@ -251,7 +216,7 @@ class TeamsetPruner
             $countClause = 'count(1) denorm_count, ';
         }
 
-        if ($abandoned) {
+        if ($unused) {
             $whereInOperator = 'NOT IN';
         } else {
             $whereInOperator = 'IN';
@@ -356,9 +321,9 @@ SQL;
 
 
     /**
-     * Repopulates the main tables with only active (used, not abandoned) team sets.
+     * Repopulates the main tables with only active, in-use team sets.
      *
-     * We use the buildAbandonedTeamsetQuery() method with false as the second arg to build a query that will return
+     * We use the buildUnusedTeamsetQuery() method with false as the second arg to build a query that will return
      * only active team sets.
      *
      * We use that sql to run an "insert select" query that copies our desired data from the backup table into
@@ -377,7 +342,7 @@ SQL;
         }
 
         $teamSetsTableBackup = $this->backedUpTables['team_sets'];
-        $activeTeamsetSQL = $this->buildAbandonedTeamsetsQuery(false, false, $teamSetsTableBackup);
+        $activeTeamsetSQL = $this->buildUnusedTeamsetsQuery(false, false, $teamSetsTableBackup);
         $backupTable = $this->backedUpTables[$tableName];
         $fields = implode(', ', $this->getFieldsForTable($tableName));
 
@@ -447,176 +412,6 @@ SQL;
 
         return array_keys($fields);
     }
-
-
-    /**
-     * This method is the functional equivalent of "belt and suspenders" - we're double checking that the team sets
-     * we're going to delete are not actively in use.
-     *
-     * The searchForAbandonedTeamsets() method will return to us all of the team set id's we think are no longer in
-     * use.
-     * @return bool
-     */
-    public function verifyTeamsetsToPrune()
-    {
-        $activeTeamsetIDs = array();
-        $abandonedTeamsetIDs = array_keys($this->searchForAbandonedTeamsets());
-        $teamsetChunks = array_chunk($abandonedTeamsetIDs, 1000);
-        $chunkTotalCount = count($teamsetChunks);
-        $currentChunk = 0;
-
-        $tables = $this->getTablesWithTeams();
-        $selectClauses = array();
-        foreach ($tables as $table) {
-            $selectClauses[] = "  select id, team_set_id, '$table' as module_table from $table  where deleted = 0";
-        }
-
-        $unions = implode("\n  union\n", $selectClauses);
-
-        foreach ($teamsetChunks as $chunkOfTeamSetIDs) {
-            $currentChunk++;
-            $this->stdOut("Verifying chunk $currentChunk of $chunkTotalCount");
-            $sql = "select * from ($unions";
-            $sql .= ") where team_set_id in (?)";
-
-            $stmt = $this->db->conn->executeQuery($sql, [$chunkOfTeamSetIDs], [\Sugarcrm\Sugarcrm\Dbal\Connection::PARAM_STR_ARRAY]);
-
-            while ($row = $stmt->fetch(\PDO::FETCH_ASSOC)) {
-                if (!isset($activeTeamsetIDs[$row['module_table']])) {
-                    $activeTeamsetIDs[$row['module_table']] = array();
-                }
-                $activeTeamsetIDs[$row['module_table']][] = $row['team_set_id'];
-            }
-        }
-
-        if (empty($activeTeamsetIDs)) {
-            $this->stdOut("Teamsets to be deleted verified! We're not deleting any active team sets.");
-            return true;
-        } else {
-            $dateStamp = date("Y_m_d_H_i_s");
-            $dirPath = "TeamsetPruner/verify/active_teamsets_{$dateStamp}";
-            $this->stdOut("STOP! We're about to delete team sets that are actively in use!");
-            foreach ($activeTeamsetIDs as $moduleName => $teamSetData) {
-                $filePath = "{$dirPath}/$moduleName";
-                $teamSetData = array_unique($teamSetData);
-                $dataAsString = print_r($teamSetData, true);
-                $this->writeFile($filePath, $dataAsString);
-            }
-            $this->stdOut("Review $dirPath for details.");
-            $this->stdOut("There will be one file for each module with active team sets we would have deleted.");
-            $this->stdOut("Each file will list every active team we would have deleted, along with the record ID's that are assigned to that team set.");
-            return false;
-        }
-    }
-
-
-    /**
-     * This method will return any team sets that are currently in use (they are assigned to any bean) but do not exist
-     * in the passed in query (which will be either for the team_sets table or the active denorm table).
-     *
-     * The intention with this function is to detect any team sets that were deleted by prune() but should not have
-     * been. However, it could also be useful to discover team sets that are assigned, but don't exist in the necessary
-     * tables. If an assigned team set is missing from the denorm table, any records it is assigned to will be inaccessible.
-     * If an assigned team set is missing from the team sets table, any records it is assigned to will become
-     * inaccessible after a denorm rebuild.
-     *
-     * @param string $sql - a query to look for team sets in either the denorm or team_sets table.
-     * @return array - team set IDs that are assigned to a bean, but missing from the searched table
-     */
-    public function confirmPruneForTable($sql)
-    {
-        $tables = $this->getTablesWithTeams();
-        $selectClauses = array();
-        foreach ($tables as $table) {
-            $selectClauses[] = "  select id, team_set_id, '$table' as module_table from $table  where deleted = 0";
-        }
-
-        $unions = implode("\n  union\n", $selectClauses);
-        $deletedActiveTeamsets = array();
-        $sql = str_replace('[unions]', $unions, $sql);
-        $stmt = $this->db->conn->executeQuery($sql, [], []);
-
-        while ($row = $stmt->fetch(\PDO::FETCH_ASSOC)) {
-            if (!isset($deletedActiveTeamsets[$row['module_table']])) {
-                $deletedActiveTeamsets[$row['module_table']] = array();
-            }
-            if (!isset($deletedActiveTeamsets[$row['module_table']][$row['team_set_id']])) {
-                $deletedActiveTeamsets[$row['module_table']][$row['team_set_id']] = array();
-            }
-            $deletedActiveTeamsets[$row['module_table']][$row['team_set_id']][] = $row['id'];
-        }
-
-        return $deletedActiveTeamsets;
-    }
-
-
-    /**
-     * Write missing team set data to a log file. The log file's name will be date stamped and written to
-     * TeamsetPruner/confirm/<file_name>
-     *
-     * @param $missingData
-     * @param $missingFromTable
-     */
-    public function logMissingTeamsets($missingData, $missingFromTable)
-    {
-        $this->stdOut("STOP! There are active team sets that are missing from the $missingFromTable table.");
-        $dateStamp = date("Y_m_d_H_i_s");
-        $dirPath = "TeamsetPruner/confirm/active_teamsets_{$dateStamp}";
-        foreach ($missingData as $moduleName => $teamSetData) {
-            $filePath = "{$dirPath}/$moduleName";
-            $teamSetData = array_unique($teamSetData);
-            $dataAsString = print_r($teamSetData, true);
-            $this->writeFile($filePath, $dataAsString);
-        }
-        $this->stdOut("Review $dirPath for details.");
-        $this->stdOut("There will be one file for each module with active team sets we have deleted from the $missingFromTable table.");
-        $this->stdOut("Each file will list every active missing team set id, along with the record ID's that are assigned to that team set id.");
-    }
-
-
-    /**
-     * Checks all tables for team_set_id's that are not in the team_sets or team_sets_teams tables.
-     *
-     * Normally, you should never have team_set_id's in bean records that are not in the team_sets and team_sets_teams
-     * tables.
-     *
-     * However, you might have this problem if you've been changing team_set_id fields manually or if you've somehow
-     * lost data from your team_set tables.
-     *
-     * If your beans all have team_set_id's that are in your team_sets and team_sets_teams tables, this method will
-     * return true. But if you've got team_set_id's that aren't valid (not in your team_sets/team_sets_teams tables)
-     * it will return false and log the offending teamsets.
-     *
-     * @see TeamsetPruner::logMissingTeamsets()
-     * @return bool
-     */
-    public function confirmPrune()
-    {
-        $teamSetsSQL = "select * from ([unions]) unions where unions.team_set_id not in (select id from team_sets where deleted = 0)";
-        $missingFromTeamSetsTable = $this->confirmPruneForTable($teamSetsSQL);
-
-        $denormSQL = "select * from ([unions]) unions where unions.team_set_id not in (select team_set_id from {$this->denormTableName})";
-        $missingFromDenormTable = $this->confirmPruneForTable($denormSQL);
-
-        $teamsetsConfirmed = true;
-
-        if (empty($missingFromTeamSetsTable)) {
-            $this->stdOut("There are no active team sets that are missing from the team_sets table.");
-        } else {
-            $this->logMissingTeamsets($missingFromTeamSetsTable, 'team_sets');
-            $teamsetsConfirmed = false;
-        }
-
-        if (empty($missingFromDenormTable)) {
-            $this->stdOut("There are no active team sets that are missing from the {$this->denormTableName} table.");
-        } else {
-            $this->logMissingTeamsets($missingFromDenormTable, $this->denormTableName);
-            $teamsetsConfirmed = false;
-        }
-
-        return $teamsetsConfirmed;
-    }
-
 
     /**
      * Returns the name of the active denorm table.
@@ -758,23 +553,13 @@ SQL;
 TeamsetPruner class - searches for team sets in the denorm table that are not in use for any bean and deletes them.
 
 Valid Commands:
-    sql                 - prints the SQL used to query the denormalization table for abandoned team sets.
+    sql                 - prints the SQL used to query the denormalization table for unused team sets.
     
     scan                - queries the denorm table and logs the results.
     
-    prune               - Removes abandoned Team Set entries from the denorm table ({$this->denormTableName}), team_sets, team_sets_teams 
-                          and team_sets_modules tables. You can pass 'verify' and/or 'confirm' as additional arguments
-                          (see below). If you pass 'verify' the prune() will stop if verification fails. 
-                          
-    verify              - Compares the results of our search for abandoned team sets to all tables using a different SQL
-                          query to confirm that we're really going to delete team sets that are not in use.
-                          
-                          
-    confirm             - Performed after prune, it's like a backwards verify. It will search for all active team set id's
-                          across all tables that use team sets and then search the team_sets and denrom table for those
-                          team set id's, and report any that are missing. Nothing should be missing after a prune, unless 
-                          it was missing before the prune.
-                                                    
+    prune               - Removes unused Team Set entries from the denorm table ({$this->denormTableName}), team_sets, team_sets_teams 
+                          and team_sets_modules tables.
+
     restore             - Truncates all of the team set tables and copies the data from the backup tables back into the
                           original tables. This completely reverses the effects of pruning. NOTE: don't do this on a live
                           system people are using, you could loose data.

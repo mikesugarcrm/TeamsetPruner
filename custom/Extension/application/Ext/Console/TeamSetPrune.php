@@ -3,8 +3,6 @@ $registry = Sugarcrm\Sugarcrm\Console\CommandRegistry\CommandRegistry::getInstan
 $registry->addCommands(array(
     new Sugarcrm\Sugarcrm\custom\Console\Command\TeamSetPrune\TeamSetPruneSqlCommand(),
     new Sugarcrm\Sugarcrm\custom\Console\Command\TeamSetPrune\TeamSetPruneScanCommand(),
-    new Sugarcrm\Sugarcrm\custom\Console\Command\TeamSetPrune\TeamSetPruneVerifyCommand(),
-    new Sugarcrm\Sugarcrm\custom\Console\Command\TeamSetPrune\TeamSetPruneConfirmCommand(),
     new Sugarcrm\Sugarcrm\custom\Console\Command\TeamSetPrune\TeamSetPrunePruneCommand(),
     new Sugarcrm\Sugarcrm\custom\Console\Command\TeamSetPrune\TeamSetPruneBackupCommand(),
     new Sugarcrm\Sugarcrm\custom\Console\Command\TeamSetPrune\TeamSetPruneRestoreFromBackupCommand(),

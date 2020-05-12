@@ -11,6 +11,8 @@ use Symfony\Component\Console\Input\InputOption;
 use Sugarcrm\Sugarcrm\Denormalization\TeamSecurity\State;
 use Sugarcrm\Sugarcrm\DependencyInjection\Container;
 
+require_once('custom/src/Denormalization/TeamSecurity/TeamsetPruner.php');
+
 class TeamSetPruneRestoreFromBackupCommand extends TeamSetPruneCommand implements InstanceModeInterface
 {
     protected function configure()

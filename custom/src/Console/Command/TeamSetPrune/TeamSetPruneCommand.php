@@ -35,7 +35,7 @@ abstract class TeamSetPruneCommand extends Command implements InstanceModeInterf
         }
 
         if (!$state->isAvailable()) {
-            $exception = new \Exception("The Team Security Denormalization table is not enabled. Have you tried the team-security:rebuild command?");
+            $exception = new \Exception("The Team Security Denormalization table is not available. It may not exist. You can create it with the team-security:rebuild command.");
             throw $exception;
         }
 
