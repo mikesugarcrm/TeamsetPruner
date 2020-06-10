@@ -19,10 +19,9 @@ class TeamSetPruneScanCommand extends TeamSetPruneCommand implements InstanceMod
     {
         $this
             ->setName('teamset:scan')
-            ->setDescription('Scan the denormalization table for unused team sets entries and report the number found.')
+            ->setDescription('Scan all module tables for unused team sets and report the number found.')
             ->setHelp("
-            Makes no changes, just reports how many unused team sets are in the denorm table and how
-            many records those unused team sets represent
+            Makes no changes, just reports how many unused team sets are in the database.
             ");
 
     }

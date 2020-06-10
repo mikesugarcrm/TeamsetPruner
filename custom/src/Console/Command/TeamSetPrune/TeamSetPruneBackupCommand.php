@@ -20,11 +20,13 @@ class TeamSetPruneBackupCommand extends TeamSetPruneCommand implements InstanceM
     {
         $this
             ->setName('teamset:backup')
-            ->setDescription('Backs up the current denorm table and the team_sets, team_sets_teams, and team_sets_modules tables.');
+            ->setDescription('Backs up the team_sets related tables.');
         $this->setHelp("
             You don't need to run this command before you run teamset:prune.
             This command only backs up the team set tables. This is performed automatically when you run teamset:prune.
             But if you want backups of these tables for some other purpose, you can use this command to do so easily.
+            It will back up these tables: team_sets, team_sets_teams, team_sets_modules, and the active denorm table
+            (team_sets_users_[1|2])if denormalization is enabled.
             ");
     }
 
