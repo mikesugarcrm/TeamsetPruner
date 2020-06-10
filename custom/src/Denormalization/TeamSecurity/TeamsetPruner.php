@@ -29,7 +29,7 @@ class TeamsetPruner
     /* @var array - we have to assign this dynamically in construct because the denorm table name is dynamic */
     public $tablesToPrune = array();
 
-    /* @var string - we'll retrieve this from the config table */
+    /* @var string - we'll retrieve this from the config table if denormalization is enabled */
     public $denormTableName;
 
     /* @var array - list of tables that have been backed up, with the original table name as the key and the backed up table name as the value. */
@@ -39,13 +39,16 @@ class TeamsetPruner
     {
         $this->db = $GLOBALS['db'];
         $this->db->getConnection();
-        $this->denormTableName = $this->getActiveDenormTable();
         $this->tablesToPrune = array(
             'team_sets' => 'id',
             'team_sets_teams' => 'team_set_id',
             'team_sets_modules' => 'team_set_id',
-            $this->denormTableName => 'team_set_id'
         );
+
+        if ($this->denormIsUsed()) {
+            $this->denormTableName = $this->getActiveDenormTable();
+            $this->tablesToPrune[$this->denormTableName] = 'team_set_id';
+        }
     }
 
 
@@ -91,8 +94,6 @@ class TeamsetPruner
         $this->stdOut("Starting prune");
         $this->scan();
 
-        // backup the denorm table first - restoring from backup will depend on it.
-        $this->backupTable($this->denormTableName);
         foreach ($this->tablesToPrune as $tableName => $idColumnName) {
             $this->pruneTable($tableName);
         }
@@ -128,19 +129,15 @@ class TeamsetPruner
         $unusedTeamSets = $this->searchForUnusedTeamsets();
 
         // compute total count of team sets and denorm entries.
-        $count = count(array_keys($unusedTeamSets));
-        $sum = 0;
-        foreach ($unusedTeamSets as $teamSetID => $denormTableCount) {
-            $sum+=$denormTableCount;
-        }
+        $count = count($unusedTeamSets);
 
         // log those values.
-        $this->stdOut("TeamsetPruner::scan() found $count unused team sets, which represent $sum entries in {$this->denormTableName}");
+        $this->stdOut("TeamsetPruner::scan() found $count unused team sets");
 
         // write a complete dump to a separate file.
         $dateStamp = date("Y_m_d_H_i_s");
         $filePath = "TeamsetPruner/scan/unused_teamsets_{$dateStamp}";
-        $this->stdOut("Details have been written to $filePath. This will be an array with each team set id as its key and how many users are in that team set as the value.");
+        $this->stdOut("Details have been written to $filePath. This will be an array of unused team set id's.");
         $dataAsString = print_r($unusedTeamSets, true);
         $this->writeFile($filePath, $dataAsString);
         $this->stdOut("Finished Scan");
@@ -152,7 +149,7 @@ class TeamsetPruner
      */
     public function getSQL()
     {
-        $this->stdOut($this->buildUnusedTeamsetsQuery(true));
+        $this->stdOut($this->buildUnusedTeamsetsQuery());
     }
 
 
@@ -164,13 +161,12 @@ class TeamsetPruner
      */
     public function searchForUnusedTeamsets()
     {
-        $count = 0;
         $unusedTeamsetsData = array();
-        $sql = $this->buildUnusedTeamsetsQuery(true);
+        $sql = $this->buildUnusedTeamsetsQuery();
         $results = $this->db->query($sql);
         while ($row = $this->db->fetchByAssoc($results)) {
-            $count++;
-            $unusedTeamsetsData[$row['team_set_id']] = $row['denorm_count'];
+            $unusedTeamsetsData[] = $row['team_set_id'];
+
         }
         return $unusedTeamsetsData;
     }
@@ -182,38 +178,25 @@ class TeamsetPruner
      * This query needs to be built with several variations, which are addressed by the arguments passed into this
      * method.
      *
-     * To get a count how many entries a team set accounts for in the denorm table, $includeCount = true.
-     *
      * To search for unused team sets, $unused = true. But to search for team sets that are in use,
      * $unused = false.
      *
-     * idemitsu
-     *
-     * @param bool $includeCount
      * @param bool $unused
      * @param string $teamSetsTableName
      * @param array $userIDs
      * @return string
      */
-    public function buildUnusedTeamsetsQuery($includeCount = true, $unused = true, $teamSetsTableName = 'team_sets')
+    public function buildUnusedTeamsetsQuery($unused = true, $teamSetsTableName = 'team_sets')
     {
         $tables = $this->getTablesWithTeams();
         $unions = $this->buildUnionStatements($tables, $teamSetsTableName);
 
         if (strpos($teamSetsTableName, 'tsp_') === 0) {
-            if (isset($this->backedUpTables[$this->denormTableName])) {
-                $denormTableName = $this->backedUpTables[$this->denormTableName];
+            if (isset($this->backedUpTables['team_sets'])) {
+                $teamSetsTableName = $this->backedUpTables['team_sets'];
             } else {
-                $this->stdOut("{$this->denormTableName} has not been backed up, so we can't use the backup in our queries for buildUnusedTeamsetsQuery(). Resorting to using original table {$this->denormTableName}");
-                $denormTableName = $this->denormTableName;
+                $this->stdOut("$teamSetsTableName has not been backed up, so we can't use the backup in our queries for buildUnusedTeamsetsQuery(). Resorting to using original table $teamSetsTableName");
             }
-        } else {
-            $denormTableName = $this->denormTableName;
-        }
-
-        $countClause = '';
-        if ($includeCount) {
-            $countClause = 'count(1) denorm_count, ';
         }
 
         if ($unused) {
@@ -222,10 +205,10 @@ class TeamsetPruner
             $whereInOperator = 'IN';
         }
 
-        $sql = "select $countClause team_set_id from $denormTableName";
-        $sql .= " where team_set_id $whereInOperator (";
+        $sql = "select ts.id team_set_id from $teamSetsTableName ts";
+        $sql .= "\nwhere ts.id $whereInOperator (";
         $sql .= "\n$unions\n";
-        $sql .= ") and team_set_id in (select id from $teamSetsTableName) group by team_set_id";
+        $sql .= ")";
         return $sql;
     }
 
@@ -246,7 +229,7 @@ class TeamsetPruner
             $unionStatements[] = <<<SQL
   select id from $teamSetsTableName where id in (
     select DISTINCT team_set_id from $table where team_set_id in (
-      select DISTINCT id from $teamSetsTableName
+      select id from $teamSetsTableName
       where deleted = 0
     )
   ) and deleted = 0
@@ -342,7 +325,7 @@ SQL;
         }
 
         $teamSetsTableBackup = $this->backedUpTables['team_sets'];
-        $activeTeamsetSQL = $this->buildUnusedTeamsetsQuery(false, false, $teamSetsTableBackup);
+        $activeTeamsetSQL = $this->buildUnusedTeamsetsQuery(false, $teamSetsTableBackup);
         $backupTable = $this->backedUpTables[$tableName];
         $fields = implode(', ', $this->getFieldsForTable($tableName));
 
@@ -383,8 +366,11 @@ SQL;
             'team_sets_teams' => 'team_sets_teams',
             'team_sets' => 'TeamSet',
             'team_sets_modules' => 'TeamSetModule',
-            $this->denormTableName => $this->denormTableName,
         );
+
+        if ($this->denormIsUsed()) {
+            $tableNameToDictionaryMapping[$this->denormTableName] = $this->denormTableName;
+        }
 
         BeanFactory::getBean('TeamSets');
         BeanFactory::getBean('TeamSetModules');
@@ -423,6 +409,19 @@ SQL;
         $di = \Sugarcrm\Sugarcrm\DependencyInjection\Container::getInstance();
         $state = $di->get(\Sugarcrm\Sugarcrm\Denormalization\TeamSecurity\State::class);
         return $state->getActiveTable();
+    }
+
+
+    /**
+     * Returns true if denormalization is enabled and the the denorm table is available.
+     *
+     * @return bool - true if denorm is enabled and the table is available.
+     */
+    public function denormIsUsed()
+    {
+        $di = \Sugarcrm\Sugarcrm\DependencyInjection\Container::getInstance();
+        $state = $di->get(\Sugarcrm\Sugarcrm\Denormalization\TeamSecurity\State::class);
+        return ($state->isEnabled() && $state->isAvailable());
     }
 
 

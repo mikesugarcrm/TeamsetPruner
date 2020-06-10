@@ -19,13 +19,13 @@ class TeamSetPrunePruneCommand extends TeamSetPruneCommand implements InstanceMo
     {
         $this
             ->setName('teamset:prune')
-            ->setDescription('Prune the denorm table and all team set tables of unused team sets. Original tables will be backed up automatically. DO NOT USE while users are logged into the system!')
+            ->setDescription('Prune all team set tables of unused team sets. Original tables will be backed up automatically. DO NOT USE while users are logged into the system!')
             ->setHelp("
             
                 NOTE: You should only run this during a planned outage. 
                 
-                Pruning the denorm table means
-                1) Backing up the denorm table, and the team_sets, team_sets_teams and team_sets_modules tables.
+                Pruning the team sets tables means
+                1) Backing up the denormalization table (if denorm is enabled), and the team_sets, team_sets_teams and team_sets_modules tables.
                    Backup tables start with 'tsp_' and end with a datetime stamp, '_MMDDHHMM'
                 2) Truncating the original tables.
                 3) Copying the active team sets out of the backup tables and into the truncated original tables, 

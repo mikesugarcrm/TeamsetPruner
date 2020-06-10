@@ -29,19 +29,17 @@ abstract class TeamSetPruneCommand extends Command implements InstanceModeInterf
     {
         $state = Container::getInstance()->get(State::class);
 
-        if (!$state->isEnabled()) {
-            $exception = new \Exception("Team Security Denormalization is not enabled!. Cannot prune team sets in an instance where team security is disabled.");
-            throw $exception;
-        }
+        if ($state->isEnabled()) {
 
-        if (!$state->isAvailable()) {
-            $exception = new \Exception("The Team Security Denormalization table is not available. It may not exist. You can create it with the team-security:rebuild command.");
-            throw $exception;
-        }
+            if (!$state->isAvailable()) {
+                $exception = new \Exception("The Team Security Denormalization table is not available. It may not exist. You can create it with the team-security:rebuild command.");
+                throw $exception;
+            }
 
-        if ($state->isRebuildRunning()) {
-            $exception = new \Exception("The Team Security Denormalization table is currently being rebuilt. We cannot prune until the rebuild is complete");
-            throw $exception;
+            if ($state->isRebuildRunning()) {
+                $exception = new \Exception("The Team Security Denormalization table is currently being rebuilt. We cannot prune until the rebuild is complete");
+                throw $exception;
+            }
         }
         return true;
     }
