@@ -2,7 +2,7 @@
 
 ### A sugar command line tool for safely removing unused team sets from the team sets tables in your sugar instance.
 
-The team set pruner wil find all team sets in your database that are not used by any record and delete those unused team sets from the team sets tables, including the denorm table if denormalization is enabled. You do not need to enable denormalization to use this tool.
+The team set pruner wil find all team sets in your database that are not used by any record and delete those unused team sets from the team sets tables, including the denorm table if denormalization is enabled. You do need to enable denormalization to use this tool.
 
 It will create back up tables automatically in case you need to revert your changes, and provides a "restore from backup" command.
 
